@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Safar</title>
+<style>
+:root{--sig:#ff5a1f}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;overflow:hidden;color:#f1ede2;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  background:radial-gradient(ellipse at 50% 55%,var(--bg1,#2a1105) 0%,#080606 60%,#030303 100%);transition:background 1s}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+.panel{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;
+  background:radial-gradient(ellipse at center,#1a0e07,#030303 75%);text-align:center;padding:6vw}
+.panel.hide{display:none}
+.panel h1{margin:0;font-size:clamp(70px,24vw,220px);font-weight:900;letter-spacing:-.02em;line-height:.9;text-transform:uppercase;
+  background:linear-gradient(180deg,#fff 0%,#ffb27a 45%,#ff5a1f 100%);-webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 6px 0 #7a2208) drop-shadow(0 14px 24px rgba(255,90,31,.4))}
+.panel p{margin:0;opacity:.55;font-size:13px;letter-spacing:.3em;text-transform:uppercase}
+button{font:700 15px system-ui,sans-serif;letter-spacing:.2em;text-transform:uppercase;background:var(--sig);color:#120400;border:0;
+  padding:18px 44px;border-radius:999px;box-shadow:0 10px 30px rgba(255,90,31,.45)}
+button:disabled{opacity:.4}
+#msg{font-size:13px;opacity:.7;max-width:340px;line-height:1.5}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<div class="panel" id="go">
+  <p>A lyric film</p>
+  <h1 id="title">Safar</h1>
+  <button id="start" disabled>Loading…</button>
+  <div id="msg"></div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import {FontLoader} from 'three/addons/loaders/FontLoader.js';
+import {TextGeometry} from 'three/addons/geometries/TextGeometry.js';
+import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+
+/* ======== SETTINGS ======== */
+const TITLE='Safar';
+const AUDIO_SRC='song.mp3';
+// Lyrics + timings are read automatically from your old page (index.html).
+const LYRIC_SOURCES=['index.html','old.html','lyrics.js'];
+/* ========================== */
+const $=id=>document.getElementById(id);
+$('title').textContent=TITLE;document.title=TITLE;
+const clamp=(v,a=0,b=1)=>Math.min(b,Math.max(a,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const eOut=t=>1-Math.pow(1-t,4);
+const eBack=t=>{const c=1.9;return 1+(c+1)*Math.pow(t-1,3)+c*Math.pow(t-1,2)};
+const eBounce=t=>{const n=7.5625,d=2.75;if(t<1/d)return n*t*t;if(t<2/d)return n*(t-=1.5/d)*t+.75;if(t<2.5/d)return n*(t-=2.25/d)*t+.9375;return n*(t-=2.625/d)*t+.984375};
+
+/* ---------- lyrics loader ---------- */
+let LY=null;
+async function loadLyrics(){
+  for(const src of LYRIC_SOURCES){
+    try{
+      const r=await fetch(src,{cache:'no-store'});if(!r.ok)continue;
+      const txt=await r.text();
+      const m=txt.match(/const\s+LYRICS\s*=\s*(\[[\s\S]*?\n\s*\])\s*;/);if(!m)continue;
+      const arr=new Function('return '+m[1])();
+      if(Array.isArray(arr)&&arr.length)return arr;
+    }catch(e){}
+  }
+  return null;
+}
+
+/* ---------- audio ---------- */
+const audio=new Audio(AUDIO_SRC);audio.preload='auto';
+let an=null,fd=null,bass=0,bassS=0;
+function initAnalyser(){
+  if(an)return;
+  try{const AC=window.AudioContext||window.webkitAudioContext,ctx=new AC();
+    const src=ctx.createMediaElementSource(audio);an=ctx.createAnalyser();an.fftSize=256;an.smoothingTimeConstant=.82;
+    src.connect(an);an.connect(ctx.destination);fd=new Uint8Array(an.frequencyBinCount);if(ctx.state==='suspended')ctx.resume()}catch(e){an=null}
+}
+
+/* ---------- three.js ---------- */
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
+document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,.1,200);camera.position.set(0,0,14);
+const pm=new THREE.PMREMGenerator(renderer);scene.environment=pm.fromScene(new RoomEnvironment(),.04).texture;
+
+const key=new THREE.DirectionalLight(0xff5a1f,3.2);key.position.set(5,8,10);scene.add(key);
+const rim=new THREE.PointLight(0x4fa8ff,90,60);rim.position.set(-8,-3,-4);scene.add(rim);
+const fill=new THREE.PointLight(0xffffff,40,50);fill.position.set(0,0,12);scene.add(fill);
+scene.add(new THREE.AmbientLight(0xffffff,.25));
+
+const PAL=[
+  {c:0xff5a1f,em:0x701a00,bg:'#2a1105',rim:0x4fa8ff},
+  {c:0xff2d78,em:0x6a0030,bg:'#2a0516',rim:0xffb02e},
+  {c:0x35d0ff,em:0x00455e,bg:'#04202a',rim:0xff5a1f},
+  {c:0xffc83a,em:0x6a4a00,bg:'#2a2005',rim:0xc044ff},
+  {c:0xa66bff,em:0x2e0070,bg:'#150a2a',rim:0x35ffb0}
+];
+let pal=PAL[0],palIdx=0;
+const keyTarget=new THREE.Color(PAL[0].c),rimTarget=new THREE.Color(PAL[0].rim);
+
+/* particles */
+const NP=800,pPos=new Float32Array(NP*3),pSpd=new Float32Array(NP);
+for(let i=0;i<NP;i++){pPos[i*3]=(Math.random()-.5)*50;pPos[i*3+1]=(Math.random()-.5)*34;pPos[i*3+2]=-45+Math.random()*58;pSpd[i]=.6+Math.random()*1.6}
+const pg=new THREE.BufferGeometry();pg.setAttribute('position',new THREE.BufferAttribute(pPos,3));
+const pts=new THREE.Points(pg,new THREE.PointsMaterial({size:.1,color:0xffffff,transparent:true,opacity:.85,depthWrite:false}));scene.add(pts);
+
+/* floating wire shapes */
+const shapes=[];
+for(let i=0;i<7;i++){
+  const geo=[new THREE.IcosahedronGeometry(1.6,0),new THREE.OctahedronGeometry(1.4,0),new THREE.TorusGeometry(1.4,.04,8,40),new THREE.TetrahedronGeometry(1.5,0)][i%4];
+  const m=new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:.22}));
+  m.position.set((Math.random()-.5)*26,(Math.random()-.5)*16,-8-Math.random()*22);
+  m.userData={rx:(Math.random()-.5)*.6,ry:(Math.random()-.5)*.6,bob:Math.random()*6};scene.add(m);shapes.push(m);
+}
+
+addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix()});
+
+/* ---------- 3D lyric lines ---------- */
+let font=null;const lines=[];let curLine=null;
+function vis(){const h=2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*14;return{w:h*camera.aspect,h}}
+
+function layout(ws,v){
+  const gap=.45,rowH=1.4;
+  for(let s=3.2;s>=.2;s-=.05){
+    const maxW=v.w*.9/s;if(!ws.every(w=>w<=maxW))continue;
+    const rows=[[]];let cw=0;
+    ws.forEach((w,k)=>{const r=rows[rows.length-1];if(r.length&&cw+gap+w>maxW){rows.push([]);cw=0}
+      const rr=rows[rows.length-1];cw+=(rr.length?gap:0)+w;rr.push(k)});
+    if(rows.length*rowH*s<=v.h*.55)return{s,rows,gap,rowH};
+  }
+  return{s:.2,rows:[ws.map((_,k)=>k)],gap,rowH};
+}
+
+function buildLine(text,i){
+  const words=text.toUpperCase().split(/\s+/).filter(Boolean);
+  const style=i%5,p=PAL[i%PAL.length];
+  let hi=0;words.forEach((w,k)=>{if(w.replace(/\W/g,'').length>words[hi].replace(/\W/g,'').length)hi=k});
+  const geos=words.map(w=>{
+    const g=new TextGeometry(w,{font,size:1,height:.42,curveSegments:8,bevelEnabled:true,bevelThickness:.06,bevelSize:.045,bevelSegments:4});
+    g.computeBoundingBox();const b=g.boundingBox;const wd=b.max.x-b.min.x;
+    g.translate(-(b.min.x+b.max.x)/2,-.36,-.21);return{g,wd};
+  });
+  const L=layout(geos.map(o=>o.wd),vis());
+  const group=new THREE.Group();const t0=performance.now();
+  L.rows.forEach((row,ri)=>{
+    const rowW=row.reduce((a,k)=>a+geos[k].wd,0)+L.gap*(row.length-1);let cx=-rowW/2;
+    const y=((L.rows.length-1)/2-ri)*L.rowH*L.s;
+    row.forEach((k,n)=>{
+      const o=geos[k],hl=k===hi&&words.length>1;
+      const mat=new THREE.MeshStandardMaterial({color:hl?p.c:0xf4efe4,metalness:hl?.35:.65,roughness:hl?.3:.22,
+        emissive:hl?p.em:0x000000,emissiveIntensity:1,envMapIntensity:1.25,transparent:true,opacity:0});
+      const m=new THREE.Mesh(o.g,mat);
+      const tx=(cx+o.wd/2)*L.s;cx+=o.wd+L.gap;
+      const side=(i+k)%2?-1:1;
+      const from={x:tx,y,z:0},rot={x:0,y:0,z:0};let ease=eOut,sc0=1;
+      if(style===0){from.z=-38;rot.y=side*Math.PI*1.4}
+      else if(style===1){from.y=y+13;rot.x=-Math.PI*1.1;ease=eBounce}
+      else if(style===2){from.x=tx+side*16;rot.z=side*Math.PI*.7}
+      else if(style===3){from.z=7;rot.y=-side*Math.PI;sc0=.001;ease=eBack}
+      else {from.y=y-12;from.z=-14;rot.x=Math.PI*1.1;rot.y=side*Math.PI*.6}
+      m.userData={tx,ty:y,from,rot,ease,sc0,s:L.s,delay:(ri*3+n)*95+k*20,hl,k};
+      m.scale.setScalar(L.s);
+      m.position.set(from.x,from.y,from.z);m.rotation.set(rot.x,rot.y,rot.z);
+      group.add(m);
+    });
+  });
+  scene.add(group);
+  return{group,t0,exit:null};
+}
+
+function setPalette(i){
+  palIdx=i%PAL.length;pal=PAL[palIdx];
+  keyTarget.setHex(pal.c);rimTarget.setHex(pal.rim);
+  document.documentElement.style.setProperty('--bg1',pal.bg);
+}
+let camKick=0;
+function showLine(i){
+  if(curLine){curLine.exit=performance.now();lines.push(curLine);curLine=null}
+  const text=i>=0&&LY?LY[i][1]:'';if(!text||!font)return;
+  setPalette(i);curLine=buildLine(text,i);camKick=1;
+}
+function disposeLine(l){scene.remove(l.group);l.group.children.forEach(m=>{m.geometry.dispose();m.material.dispose()})}
+
+/* ---------- loop ---------- */
+let cur=-2,last=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt=Math.min(.05,(now-last)/1000);last=now;const t=now/1000;
+  if(an){an.getByteFrequencyData(fd);let s=0;for(let i=0;i<6;i++)s+=fd[i];bass=s/6/255}else bass*=.95;
+  bassS+=(bass-bassS)*.25;
+
+  if(LY&&font&&!audio.paused){
+    const at=audio.currentTime;let i=-1;
+    for(let k=0;k<LY.length;k++){if(LY[k][0]-.12<=at)i=k;else break}
+    if(i!==cur){cur=i;showLine(i)}
+  }
+
+  // active line
+  if(curLine){
+    const g=curLine.group;
+    g.children.forEach(m=>{
+      const u=m.userData,p=clamp((now-curLine.t0-u.delay)/1000/.95),e=u.ease(p);
+      m.position.x=lerp(u.from.x,u.tx,e);m.position.y=lerp(u.from.y,u.ty,e);m.position.z=lerp(u.from.z,0,e);
+      m.rotation.set(u.rot.x*(1-e),u.rot.y*(1-e),u.rot.z*(1-e));
+      m.scale.setScalar(Math.max(.001,u.s*lerp(u.sc0,1,e)));
+      m.material.opacity=clamp(p*4);
+      if(p>=1){m.position.y=u.ty+Math.sin(t*1.4+u.k)*.07*u.s;m.rotation.y=Math.sin(t*.6+u.k*.7)*.1;m.rotation.x=Math.sin(t*.5+u.k)*.04}
+      if(u.hl)m.material.emissiveIntensity=1+bassS*2.2;
+    });
+    const sc=1+bassS*.06;g.scale.setScalar(sc);
+  }
+  // exiting lines
+  for(let n=lines.length-1;n>=0;n--){
+    const l=lines[n],q=clamp((now-l.exit)/520);
+    l.group.position.z=q*q*11;l.group.rotation.x=-q*.5;
+    l.group.children.forEach(m=>m.material.opacity=1-q);
+    if(q>=1){disposeLine(l);lines.splice(n,1)}
+  }
+
+  // lights, particles, shapes, camera
+  key.color.lerp(keyTarget,.05);rim.color.lerp(rimTarget,.05);
+  key.intensity=3.2+bassS*3;rim.intensity=90+bassS*120;
+  rim.position.x=Math.sin(t*.6)*10;rim.position.y=Math.cos(t*.4)*5;
+  const pa=pg.attributes.position;
+  for(let i=0;i<NP;i++){let z=pa.array[i*3+2]+pSpd[i]*dt*(3+bassS*14);if(z>13)z=-45;pa.array[i*3+2]=z}
+  pa.needsUpdate=true;pts.material.color.copy(key.color).lerp(new THREE.Color(0xffffff),.5);
+  shapes.forEach(s=>{s.rotation.x+=s.userData.rx*dt;s.rotation.y+=s.userData.ry*dt;
+    s.position.y+=Math.sin(t+s.userData.bob)*.004;s.material.color.copy(key.color);s.scale.setScalar(1+bassS*.25)});
+  camKick*=.93;
+  camera.position.set(Math.sin(t*.3)*.9,Math.cos(t*.22)*.45,14-camKick*1.4-bassS*.4);
+  camera.lookAt(0,0,0);camera.rotation.z+=Math.sin(t*.25)*.015;
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(frame);
+
+/* ---------- start ---------- */
+const btn=$('start'),msg=$('msg');
+Promise.all([
+  new Promise(res=>new FontLoader().load('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/fonts/helvetiker_bold.typeface.json',f=>{font=f;res()},undefined,()=>res())),
+  loadLyrics().then(l=>{LY=l})
+]).then(()=>{
+  if(!font){msg.textContent='Could not load the 3D font. Check your internet and refresh.';btn.textContent='Error';return}
+  if(!LY){msg.textContent='Lyrics not found. Keep your old lyrics page as index.html in the same folder as this file.';btn.textContent='No lyrics';return}
+  btn.disabled=false;btn.textContent='▶ Play';
+});
+btn.onclick=()=>{$('go').classList.add('hide');cur=-2;initAnalyser();audio.currentTime=0;audio.play()};
+audio.addEventListener('ended',()=>{cur=-2;showLine(-1);btn.textContent='↻ Replay';$('go').classList.remove('hide')});
+</script>
+</body>
+</html>
